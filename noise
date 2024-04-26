@@ -1,0 +1,71 @@
+
+#noise data: https://deohs.washington.edu/national-transportation-noise-exposure-map-download
+library(sf)
+library(dplyr)
+
+# Directory containing the shapefiles (.shp files that include the noise data)
+shapefile_dir <- "/Users/conus_shp/"
+
+# Get a list of all shapefiles in the directory
+shapefiles <- list.files(path = shapefile_dir, pattern = "\\.shp$", full.names = TRUE)
+
+# Create an empty list to store filtered data frames
+filtered_data_list <- list()
+
+# Read GEOID data (GEOID data that has already been extracted from addresses)
+geoid_data <- read.csv("/ADI.csv")
+
+# Convert to character type to prevent scientific notation and make sure its by tract instead of block group
+geoid_data$GEOID <- as.character(geoid_data$GEOID)
+geoid_data$GEOID <- as.numeric(substr(format(geoid_data$GEOID, scientific = FALSE), 1, 10))
+
+# Iterate through each shapefile
+for (shapefile in shapefiles) {
+  # Read the shapefile
+  testtract <- st_read(shapefile)
+  
+  # Convert GEOID to numeric
+  testtract$GEOID <- as.numeric(testtract$GEOID)
+  
+  # Filter testtract based on GEOID present in geoid_data
+  filtered_testtract <- testtract[testtract$GEOID %in% geoid_data$GEOID, ]
+  
+  # Add filtered_testtract to the list
+  filtered_data_list[[length(filtered_data_list) + 1]] <- filtered_testtract
+}
+
+# Combine all filtered data frames into a single data frame
+combined_filtered_data <- do.call(rbind, filtered_data_list)
+
+# Calculate population-weighted noise exposure metric
+pop_weighted_exposure <- (
+  (combined_filtered_data$ns4050n * 47.5) + 
+  (combined_filtered_data$ns5060n * 55) + 
+  (combined_filtered_data$ns6070n * 62.5) + 
+  (combined_filtered_data$ns7080n * 72.5) + 
+  (combined_filtered_data$ns8090n * 82.5) + 
+  (combined_filtered_data$nois90n * 90)
+) / (
+  combined_filtered_data$ns4050n + 
+  combined_filtered_data$ns5060n + 
+  combined_filtered_data$ns6070n + 
+  combined_filtered_data$ns7080n + 
+  combined_filtered_data$ns8090n + 
+  combined_filtered_data$nois90n
+)
+
+# Add the calculated population-weighted noise exposure metric to combined_filtered_data
+combined_filtered_data$pop_weighted_exposure <- pop_weighted_exposure
+
+view(combined_filtered_data$pop_weighted_exposure)
+
+# Merge combined_filtered_data with geoid_data based on GEOID
+merged_data <- left_join(combined_filtered_data, geoid_data, by = "GEOID")
+
+# Create a new data frame with SID, GEOID, and pop_weighted_exposure
+extracted_data <- merged_data %>%
+  dplyr::select(SID, GEOID, pop_weighted_exposure)
+
+# View the extracted data frame
+view(extracted_data)
+write_csv(extracted_data, 'noise.csv')
