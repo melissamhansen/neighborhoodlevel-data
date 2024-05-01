@@ -1,10 +1,25 @@
-
 #noise data: https://deohs.washington.edu/national-transportation-noise-exposure-map-download
+#tract data: https://www2.census.gov/geo/tiger/GENZ2020/shp/ in /cb_2020_us_tract_500k/cb_2020_us_tract_500k.shp
 library(sf)
 library(dplyr)
 
-# Directory containing the shapefiles (.shp files that include the noise data)
-shapefile_dir <- "/Users/conus_shp/"
+# Load the shapefile
+shapefile <- "/Users/Downloads/cb_2020_us_tract_500k/cb_2020_us_tract_500k.shp"
+tracts <- st_read(shapefile)
+
+# Ensure correct column names for longitude and latitude
+coordinates_sf <- st_as_sf(coordinates, coords = c("lon", "lat"), crs = st_crs(tracts))
+
+# Perform spatial join to find which tracts each point falls into
+points_with_tract <- st_join(coordinates_sf, tracts)
+
+# Extract SID and GEOID
+geoid_data <- points_with_tract %>% 
+  dplyr::select(SID, GEOID)
+view(geoid_data)
+
+# Directory containing the shapefiles
+shapefile_dir <- "/conus_shp/"
 
 # Get a list of all shapefiles in the directory
 shapefiles <- list.files(path = shapefile_dir, pattern = "\\.shp$", full.names = TRUE)
@@ -12,12 +27,9 @@ shapefiles <- list.files(path = shapefile_dir, pattern = "\\.shp$", full.names =
 # Create an empty list to store filtered data frames
 filtered_data_list <- list()
 
-# Read GEOID data (GEOID data that has already been extracted from addresses)
-geoid_data <- read.csv("/ADI.csv")
-
-# Convert to character type to prevent scientific notation and make sure its by tract instead of block group
-geoid_data$GEOID <- as.character(geoid_data$GEOID)
-geoid_data$GEOID <- as.numeric(substr(format(geoid_data$GEOID, scientific = FALSE), 1, 10))
+# Remove scientific notation using format() function
+geoid_data$GEOID <- as.numeric(geoid_data$GEOID)
+view(geoid_data$GEOID)
 
 # Iterate through each shapefile
 for (shapefile in shapefiles) {
@@ -27,16 +39,16 @@ for (shapefile in shapefiles) {
   # Convert GEOID to numeric
   testtract$GEOID <- as.numeric(testtract$GEOID)
   
-  # Filter testtract based on GEOID present in geoid_data
+  # Filter testtract based on GEOID present in adi_data
   filtered_testtract <- testtract[testtract$GEOID %in% geoid_data$GEOID, ]
   
   # Add filtered_testtract to the list
   filtered_data_list[[length(filtered_data_list) + 1]] <- filtered_testtract
 }
 
+
 # Combine all filtered data frames into a single data frame
 combined_filtered_data <- do.call(rbind, filtered_data_list)
-
 # Calculate population-weighted noise exposure metric
 pop_weighted_exposure <- (
   (combined_filtered_data$ns4050n * 47.5) + 
@@ -57,15 +69,12 @@ pop_weighted_exposure <- (
 # Add the calculated population-weighted noise exposure metric to combined_filtered_data
 combined_filtered_data$pop_weighted_exposure <- pop_weighted_exposure
 
-view(combined_filtered_data$pop_weighted_exposure)
-
-# Merge combined_filtered_data with geoid_data based on GEOID
-merged_data <- left_join(combined_filtered_data, geoid_data, by = "GEOID")
+# Project 'geoid_data' to match the CRS of 'combined_filtered_data'
+geoid_data <- st_transform(geoid_data, st_crs(combined_filtered_data))
+merged_data <- st_join(combined_filtered_data, geoid_data, by = "GEOID")
 
 # Create a new data frame with SID, GEOID, and pop_weighted_exposure
 extracted_data <- merged_data %>%
-  dplyr::select(SID, GEOID, pop_weighted_exposure)
+  dplyr::select(SID, pop_weighted_exposure)
 
-# View the extracted data frame
-view(extracted_data)
 write_csv(extracted_data, 'noise.csv')
